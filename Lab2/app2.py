@@ -1,3 +1,4 @@
+import re
 import secrets
 from datetime import timedelta, datetime
 
@@ -93,6 +94,17 @@ def get_current_user_from_session():
         return None
 
 
+def validate_password(password):
+    if len(password) < 8:
+        return "Password must be at least 8 characters long"
+    if not re.search(r"[A-Z]", password):
+        return "Password must contain at least one uppercase letter"
+    if not re.search(r"[0-9]", password):
+        return "Password must contain at least one number"
+    return None
+
+
+
 # --- 1.REGISTRATION 2fa ---
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -103,8 +115,11 @@ def register():
         if User.query.filter_by(email=email).first():
             return render_template('register.html', error="Email already registered")
 
-        hashed_password = generate_password_hash(password)
+        validation_error = validate_password(password)
+        if validation_error:
+            return render_template('register.html', error=validation_error)
 
+        hashed_password = generate_password_hash(password)
         token = secrets.token_urlsafe(32)   # Generira 32 bajti bezbeden, URL token
 
         new_user = User(
