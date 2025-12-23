@@ -5,6 +5,7 @@ from functools import wraps
 
 from flask import Flask, request, render_template, url_for, session
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.orm import backref
 from werkzeug.utils import redirect
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -77,6 +78,25 @@ class Permission(db.Model):
     description = db.Column(db.String(255))
 
 
+class ResourceAccess(db.Model):
+    __tablename__ = 'resource_access'
+
+    id = db.Column(db.Integer, primary_key=True)
+    # 1. Koj korisnik go ima pristapot
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    # 2. Na koj resurs se odnesuva
+    resource_type = db.Column(db.String(50), nullable=False)
+    resource_id = db.Column(db.Integer, nullable=False)
+    # 3. Kakva privilegija ima
+    permission_type = db.Column(db.String(50), nullable=False)
+    expiry_time = db.Column(db.DateTime, nullable=True)
+    user = db.relationship('User', backref=db.backref('resource_accesses', lazy='dynamic'))
+
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'resource_type', 'resource_id', 'permission_type',
+                            name = 'uq_user_resource_permission'),
+    )
+
 with app.app_context():
     db.create_all()
 
@@ -128,6 +148,46 @@ def initialize_roles_and_permissions():
 
     db.session.commit()
 
+
+def has_resource_permission(user, resource_type, resource_id, permission_type):
+    if not user:
+        return False
+
+    if user.role and user.role.name == 'SuperAdmin':
+        return True
+
+    # Proverka vo ReBAC tabelata
+    access = ResourceAccess.query.filter_by(
+        user_id=user.id,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        permission_type=permission_type
+    ).first()
+
+    if access:
+        if access.expiry_time and access.expiry_time < datetime.utcnow():
+            db.session.delete(access)
+            db.session.commit()
+            return False
+        return True
+    return False
+
+
+def grant_resource_permission(user_id, resource_type, resource_id, permission_type):
+    existing = ResourceAccess.query.filter_by(
+        user_id=user_id, resource_type=resource_type,
+        resource_id=resource_id, permission_type=permission_type
+    ).first()
+
+    if not existing:
+        new_access = ResourceAccess(
+            user_id=user_id, resource_type=resource_type,
+            resource_id=resource_id, permission_type=permission_type
+        )
+        db.session.add(new_access)
+        db.session.commit()
+        return True
+    return False
 
 # --- Povikaj ja funkcijata na startanje na aplikacijata ---
 with app.app_context():
@@ -433,9 +493,9 @@ def set_user_role(user_id):
                            user_to_change=user_to_change)
 
 
-@app.route('/request_manager_access')
-@permission_required('create_post') # Samo Editori i Manageri mozat da pobaraat
-def request_manager_access():
+@app.route('/request_jit_manager')
+@permission_required('view_dashboard') # Samo Editori i Manageri mozat da pobaraat
+def request_jit_manager():
     user = get_current_user_from_session()
 
     # Se dobiva Manager uloga, cija navisoka dozvola e 'manage_users'
@@ -444,20 +504,12 @@ def request_manager_access():
     if not manager_role:
         return "System Error: Manager role not found", 500
 
-    # 1.Postavuvame istek na JIT pristapot (5 minuti)
-    expiry = datetime.utcnow() + timedelta(minutes=5)
-
-    # 2.Azuriranje na korisnikot so JIT istekot
-    # (Ova ne ja menuva negovata permanentna uloga, tuku mu dava privremen istek)
-    user.jit_role_expiry = expiry
-    db.session.commit()
-
-    # 3.Privremeno menuvanje na ulogata vo Sesijata (za tekovnata proverka)
-    # Ke ja dodelime Manager ulogata za da moze vednas da pristapi
+    user.jit_role_expiry = datetime.utcnow() + timedelta(minutes=5)
     user.role_id = manager_role.id
     user.role = manager_role
+    db.session.commit()
 
-    return redirect(url_for('profile', success=f"JIT Manager Access Granted for 5 minutes! Expires: {expiry.strftime('%H:%M:%S')}"))
+    return redirect(url_for('profile', success=f"JIT Manager Access Granted!"))
 
 
 # Dodaj lista na korisnici za da moze da se pristapi do poedinecniot link
@@ -467,6 +519,52 @@ def users_list():
     all_users = User.query.all()
     return render_template('users_list.html', all_users=all_users)
 
+
+@app.route('/admin/grant_resource', methods=['GET', 'POST'])
+@permission_required('manage_users')
+def admin_grant_resource():
+    all_users = User.query.all()
+    if request.method == 'POST':
+        u_id = request.form.get('user_id')
+        res_id = request.form.get('resource_id')
+        grant_resource_permission(u_id, 'document', res_id, 'view')
+        return redirect(url_for('admin_grant_resource', success="Entitlement added successfully!"))
+    return render_template('grant_resource.html', users=all_users)
+
+
+@app.route('/request_jit_document/<int:doc_id>')
+def request_jit_document(doc_id):
+    user = get_current_user_from_session()
+    if not user:
+        return redirect(url_for('login'))
+
+    new_access = ResourceAccess(
+        user_id=user.id,
+        resource_type='document',
+        resource_id=doc_id,
+        permission_type='view',
+        expiry_time=datetime.utcnow() + timedelta(minutes=5)
+    )
+    db.session.add(new_access)
+    db.session.commit()
+    return redirect(url_for('view_document', doc_id=doc_id))
+
+
+@app.route('/document/<int:doc_id>')
+def view_document(doc_id):
+    user = get_current_user_from_session()
+    if not user:
+        return redirect(url_for('login'))
+
+    has_global = any(p.name == 'view_reports' for p in user.role.permissions)
+    has_specific = has_resource_permission(user, 'document', doc_id, 'view')
+
+    if has_global or has_specific:
+        source = "Global Role" if has_global else "Specific JIT access"
+        return render_template('protected.html', user=user,
+                               message=f"Successfully accessed document #{doc_id} via {source}!")
+    return render_template('forbidden.html', user=user,
+                           error=f"You do not have permission for Document #{doc_id}. A specific JIT permission is required.")
 
 # --- 5.Logout ---
 @app.route('/logout')
