@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Profile</title>
+</head>
+<body>
+    <h2> Welcome to your Profile, {{ user.email }}!</h2>
+    <p>This page is available only with valid, authenticated session.</p>
+
+    <p><a href="{{ url_for('logout') }}">Logout</a></p>
+
+    <h3>Actions:</h3>
+<ul>
+    <li><a href="{{ url_for('view_document', doc_id=101) }}">Try to view Document #101</a></li>
+    {% if user.role.name in ['SuperAdmin', 'Manager'] %}
+        <li><a href="{{ url_for('users_list') }}">Admin: Manage Users</a></li>
+        <li><a href="{{ url_for('admin_grant_resource') }}">Admin: Grant Resource Access (ReBAC)</a></li>
+    {% endif %}
+    {% if user.role.name == 'Editor' %}
+        <li><a href="{{ url_for('request_jit_manager') }}">Request JIT Manager Access (5 min)</a></li>
+    {% endif %}
+
+    <div style="margin-top:20px; border:1px solid #ccc; padding:10px;">
+
+        <p>Organizational: <a href="{{ url_for('request_jit_manager') }}">Request a Manager role (5 min)</a></p>
+
+        <p>Resource: <a href="{{ url_for('request_jit_document', doc_id=505) }}">Request access for Document #505 (5 min)</a></p>
+
+        <p><a href="{{ url_for('view_document', doc_id=505) }}">Try to open Document #505</a></p>
+    </div>
+</ul>
+{% if success %}
+        <p style="color: green; font-weight: bold;">{{ success }}</p>
+    {% endif %}
+
+    <hr>
+    <p><strong>Current Role:</strong> {{ user.role.name }}</p>
+    {% if user.jit_role_expiry %}
+        <p style="color: red;">JIT Role Expires at: {{ user.jit_role_expiry.strftime('%H:%M:%S') }}</p>
+    {% endif %}
+</body>
+</html>

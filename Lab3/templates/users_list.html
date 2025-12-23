@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Users List - Admin</title>
+</head>
+<body>
+    <h2>User Administration Panel</h2>
+
+    <p><a href="{{ url_for('profile') }}">Go back to Profile</a></p>
+
+    <h3>List of All Users</h3>
+    <table border="1" cellpadding="10" cellspacing="0">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Email</th>
+                <th>Current Role</th>
+                <th>Status</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in all_users %}
+            <tr>
+                <td>{{ user.id }}</td>
+                <td>{{ user.email }}</td>
+                <td>{{ user.role.name if user.role else 'NO ROLE ASSIGNED' }}</td>
+                <td>{{ 'Active' if user.is_active else 'Pending Verification' }}</td>
+                <td>
+                    <a href="{{ url_for('set_user_role', user_id=user.id) }}">Change Role</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <p style="margin-top: 20px;"><a href="{{ url_for('logout') }}">Logout</a></p>
+</body>
+</html>
